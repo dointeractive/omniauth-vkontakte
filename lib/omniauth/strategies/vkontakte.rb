@@ -50,20 +50,16 @@ module OmniAuth
       end
 
       def raw_info
-        access_token.options[:mode] = :query
-        access_token.options[:param_name] = :access_token
-        @raw_info ||= begin
-          params = {
-            :fields   => info_options,
-            :lang     => lang_option,
-            :v        => API_VERSION,
-          }
+        return @raw_info if @raw_info
+        result = get_user
 
-          result = access_token.get('/method/users.get', :params => params).parsed["response"]
-          (result && result.first) ? result.first : nil
+        if user_validation_required? result
+          validate_user result
+          result = get_user
         end
-      end
 
+        @raw_info = result["response"].first
+      end
 
       # You can pass +display+ or +scope+ params to the auth request, if
       # you need to set them dynamically.
@@ -145,6 +141,45 @@ module OmniAuth
         @location ||= [get_country, get_city].map(&:strip).reject(&:empty?).join(', ')
       end
 
+      def get_user
+        params = {
+          :fields   => info_options,
+          :lang     => lang_option,
+          :v        => API_VERSION,
+        }
+
+        access_token.options[:mode] = :query
+        access_token.options[:param_name] = :access_token
+        access_token.get('/method/users.get', :params => params).parsed
+      end
+
+      def user_validation_required?(response)
+        error = response["error"]
+        error && error["error_code"] == 17
+      end
+
+      def validate_user(response)
+          redirect_uri = response["error"]["redirect_uri"]
+          uri = URI redirect_uri
+
+          result = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
+            http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+            http.request Net::HTTP::Get.new(uri.to_s)
+          end.to_hash
+
+          location = result["location"][0]
+          /access_token=(?<access_token>\w+)/ =~ location
+          /user_id=(?<user_id>\d+)/ =~ location
+
+          self.access_token = rebuild_access_token(
+            access_token: access_token,
+            user_id: user_id)
+      end
+
+      def rebuild_access_token(options)
+        options.merge!(expires_in: 0)
+        access_token.class.from_hash(client, options)
+      end
     end
   end
 end
