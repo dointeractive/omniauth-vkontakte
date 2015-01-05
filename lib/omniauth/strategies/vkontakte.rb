@@ -13,7 +13,10 @@ module OmniAuth
     #     use OmniAuth::Strategies::Vkontakte, 'API Key', 'Secret Key'
     #
     class Vkontakte < OmniAuth::Strategies::OAuth2
+      class NoRawData < StandardError; end
+
       API_VERSION = '5.2'
+
       DEFAULT_SCOPE = ''
 
       option :name, 'vkontakte'
@@ -33,6 +36,7 @@ module OmniAuth
         {
           :name       => [raw_info['first_name'], raw_info['last_name']].map(&:strip).reject(&:empty?).join(' '),
           :nickname   => raw_info['nickname'],
+          :email      => access_token.params["email"],
           :first_name => raw_info['first_name'],
           :last_name  => raw_info['last_name'],
           :image      => image_url,
@@ -60,7 +64,9 @@ module OmniAuth
           }
 
           result = access_token.get('/method/users.get', :params => params).parsed["response"]
-          (result && result.first) ? result.first : nil
+
+          raise NoRawData, result unless (result.is_a?(Array) and result.first)
+          result.first
         end
       end
 
@@ -90,7 +96,8 @@ module OmniAuth
 
       def info_options
         # http://vk.com/dev/fields
-        fields = ['nickname', 'screen_name', 'sex', 'city', 'country', 'online', 'bdate', 'photo_50', 'photo_100', 'photo_200_orig']
+        fields = %w[nickname screen_name sex city country online bdate photo_50 photo_100 photo_200 photo_200_orig photo_400_orig]
+        fields.concat(options[:info_fields].split(',')) if options[:info_fields] 
         return fields.join(',')
       end
 
@@ -104,8 +111,12 @@ module OmniAuth
           raw_info['photo_50']
         when 'bigger'
           raw_info['photo_100']
+        when 'bigger_x2'
+          raw_info['photo_200']
         when 'original'
           raw_info['photo_200_orig']
+        when 'original_x2'
+          raw_info['photo_400_orig']
         else
           raw_info['photo_50']
         end
@@ -145,6 +156,11 @@ module OmniAuth
         @location ||= [get_country, get_city].map(&:strip).reject(&:empty?).join(', ')
       end
 
+      def callback_phase
+        super
+      rescue NoRawData => e
+        fail!(:no_raw_data, e)
+      end
     end
   end
 end
